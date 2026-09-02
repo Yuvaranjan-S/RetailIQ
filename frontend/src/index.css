@@ -1,0 +1,107 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-brand: 99 102 241;
+    --color-success: 16 185 129;
+    --color-warning: 245 158 11;
+    --color-danger: 239 68 68;
+  }
+  body {
+    @apply bg-[#0a0e1a] text-gray-100 font-sans;
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-gray-700 rounded-full; }
+}
+
+@layer components {
+  .card {
+    @apply bg-[#0f1629] border border-white/5 rounded-xl p-5 shadow-xl;
+  }
+  .card-sm {
+    @apply bg-[#0f1629] border border-white/5 rounded-lg p-4;
+  }
+  .btn {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm
+           transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2
+           focus:ring-offset-[#0a0e1a] disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-indigo-600 hover:bg-indigo-500 text-white focus:ring-indigo-500;
+  }
+  .btn-success {
+    @apply btn bg-emerald-600 hover:bg-emerald-500 text-white focus:ring-emerald-500;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 hover:bg-red-500 text-white focus:ring-red-500;
+  }
+  .btn-ghost {
+    @apply btn bg-white/5 hover:bg-white/10 text-gray-300 focus:ring-white/20;
+  }
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-critical { @apply badge bg-red-500/20 text-red-400 border border-red-500/30; }
+  .badge-high     { @apply badge bg-orange-500/20 text-orange-400 border border-orange-500/30; }
+  .badge-medium   { @apply badge bg-yellow-500/20 text-yellow-400 border border-yellow-500/30; }
+  .badge-low      { @apply badge bg-blue-500/20 text-blue-400 border border-blue-500/30; }
+  .badge-ok       { @apply badge bg-emerald-500/20 text-emerald-400 border border-emerald-500/30; }
+  .badge-offline  { @apply badge bg-gray-500/20 text-gray-400 border border-gray-500/30; }
+
+  .kpi-card {
+    @apply card flex flex-col gap-1;
+  }
+  .kpi-value {
+    @apply text-3xl font-bold tracking-tight;
+  }
+  .kpi-label {
+    @apply text-xs text-gray-500 uppercase tracking-widest;
+  }
+  .kpi-change-up   { @apply text-xs text-emerald-400; }
+  .kpi-change-down { @apply text-xs text-red-400; }
+
+  .sidebar-link {
+    @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium
+           transition-all duration-150 text-gray-400 hover:text-white hover:bg-white/5;
+  }
+  .sidebar-link-active {
+    @apply sidebar-link bg-indigo-600/20 text-indigo-400 border border-indigo-500/30;
+  }
+  .section-title {
+    @apply text-xs font-semibold uppercase tracking-widest text-gray-500 mb-3;
+  }
+  .pulse-dot {
+    @apply w-2 h-2 rounded-full animate-pulse;
+  }
+}
+
+/* Recharts overrides */
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: rgba(255, 255, 255, 0.05);
+}
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  @apply !bg-[#141d36] !border !border-white/10 !rounded-lg !shadow-2xl;
+}
+
+/* Glow effects */
+.glow-indigo { box-shadow: 0 0 20px rgba(99, 102, 241, 0.15); }
+.glow-emerald { box-shadow: 0 0 20px rgba(16, 185, 129, 0.15); }
+.glow-red { box-shadow: 0 0 20px rgba(239, 68, 68, 0.15); }
+
+/* Animated gradient border */
+.gradient-border {
+  position: relative;
+  border-radius: 0.75rem;
+}
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(99,102,241,0.4), rgba(16,185,129,0.2), rgba(99,102,241,0.1));
+  z-index: -1;
+}

@@ -1,0 +1,36 @@
+"""Initialize all ORM models with SQLAlchemy Base.metadata"""
+from app.models.base import (
+    User,
+    Store,
+    Zone,
+    ZoneSnapshot,
+    Inventory,
+    InventoryEvent,
+    Checkout,
+    QueueSnapshot,
+    Staff,
+    Alert,
+    Recommendation,
+    ActionResult,
+    Event,
+    SyncEvent,
+    SystemHealth,
+)
+
+__all__ = [
+    "User",
+    "Store",
+    "Zone",
+    "ZoneSnapshot",
+    "Inventory",
+    "InventoryEvent",
+    "Checkout",
+    "QueueSnapshot",
+    "Staff",
+    "Alert",
+    "Recommendation",
+    "ActionResult",
+    "Event",
+    "SyncEvent",
+    "SystemHealth",
+]
