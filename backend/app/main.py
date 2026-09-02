@@ -1,35 +1,41 @@
 """
-RetailIQ — Main FastAPI Application
+RetailIQ — Unified Full-Stack FastAPI Application
 
-Startup sequence:
-  1. Create DB tables
-  2. Seed if empty
-  3. Load store state into digital twin
-  4. Start decision engine background loop
-  5. Start WebSocket broadcaster loop
+Features:
+  - Complete REST API on `/api/*`
+  - Real-time WebSocket Digital Twin telemetry on `/ws/store`
+  - In-memory Digital Twin (`StoreStateTwin`) with M/M/c and EMA predictors
+  - High-performance production React Frontend serving on `/` and all SPA routes
 """
 import asyncio
 import logging
 import json
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from app.core.config import settings
-from app.database.connection import engine, Base, AsyncSessionLocal, init_db
+from app.database.connection import engine, AsyncSessionLocal, init_db
 from app.websocket.manager import ws_manager
 from app.services.store_state_engine import StoreStateTwin, register_store_twin, get_store_twin
 from app.decision_engine.recommendation_engine import RecommendationEngine
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 logging.basicConfig(
-    level=logging.INFO if not settings.DEBUG else logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s — %(message)s",
 )
 logger = logging.getLogger("retailiq.main")
+
+# ─── Paths ───────────────────────────────────────────────────────────────────
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
 
 # ─── Global instances ─────────────────────────────────────────────────────────
 decision_engine: RecommendationEngine = None
@@ -46,7 +52,6 @@ async def _init_store_twin() -> StoreStateTwin:
     from app.models.staff import Staff
 
     async with AsyncSessionLocal() as db:
-        # Get first active store
         result = await db.execute(select(Store).where(Store.status == "active").limit(1))
         store = result.scalar_one_or_none()
         if not store:
@@ -113,7 +118,8 @@ async def _decision_engine_loop(twin: StoreStateTwin):
     while True:
         try:
             await asyncio.sleep(10)
-            await decision_engine.run_cycle(twin)
+            if decision_engine:
+                await decision_engine.run_cycle(twin)
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -140,7 +146,7 @@ async def lifespan(app: FastAPI):
     global decision_engine
 
     # 1. Create DB tables
-    logger.info("🗄 Initializing database tables...")
+    logger.info("Initializing database tables...")
     await init_db()
 
     # 2. Seed if empty
@@ -151,7 +157,7 @@ async def lifespan(app: FastAPI):
             result = await db.execute(text("SELECT COUNT(*) FROM users"))
             count = result.scalar()
             if count == 0:
-                logger.info("🌱 Seeding database with demo data...")
+                logger.info("Seeding database with demo data...")
                 await seed(engine, db)
     except Exception as e:
         logger.warning(f"Seeding skipped or failed: {e}")
@@ -170,21 +176,21 @@ async def lifespan(app: FastAPI):
         t1 = asyncio.create_task(_decision_engine_loop(twin))
         t2 = asyncio.create_task(_store_broadcast_loop(twin))
         _bg_tasks.extend([t1, t2])
-        logger.info("🚀 RetailIQ backend started successfully")
+        logger.info("RetailIQ backend started successfully")
     else:
-        logger.error("⚠ Store twin not initialized — run seed first")
+        logger.error("Store twin not initialized — run seed first")
 
-    yield  # App is running
+    yield  # App running
 
     # Shutdown
     for task in _bg_tasks:
         task.cancel()
-    logger.info("🛑 RetailIQ backend shutting down")
+    logger.info("RetailIQ backend shutting down")
 
 
-# ─── App ──────────────────────────────────────────────────────────────────────
+# ─── App Definition ───────────────────────────────────────────────────────────
 app = FastAPI(
-    title="RetailIQ API",
+    title="RetailIQ",
     description="Edge-First AI Retail Operating & Decision System — SIH 2026",
     version="1.0.0",
     lifespan=lifespan,
@@ -196,13 +202,13 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list + ["*"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ─── Include Routers ──────────────────────────────────────────────────────────
+# ─── Include REST API Routers ─────────────────────────────────────────────────
 from app.api import auth, store, inventory, alerts, recommendations, events, analytics, simulation, system
 
 app.include_router(auth.router, prefix="/api")
@@ -221,12 +227,10 @@ app.include_router(system.router, prefix="/api")
 async def websocket_store(websocket: WebSocket, store_id: int = 1):
     await ws_manager.connect(websocket, store_id)
     try:
-        # Send immediate snapshot on connect
         twin = get_store_twin(store_id)
         if twin:
             await websocket.send_text(json.dumps(twin.snapshot()))
 
-        # Keep alive — receive pings
         while True:
             data = await websocket.receive_text()
             if data == "ping":
@@ -239,18 +243,32 @@ async def websocket_store(websocket: WebSocket, store_id: int = 1):
         await ws_manager.disconnect(websocket, store_id)
 
 
-# ─── Root ─────────────────────────────────────────────────────────────────────
-@app.get("/")
-async def root():
-    return {
-        "name": "RetailIQ API",
-        "version": "1.0.0",
-        "status": "running",
-        "docs": "/api/docs",
-        "ws": "/ws/store",
-    }
-
-
+# ─── Health Check ─────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+# ─── Mount Frontend Static Assets & SPA Fallback ──────────────────────────────
+if FRONTEND_DIST.exists():
+    assets_dir = FRONTEND_DIST / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(request: Request, full_path: str):
+        # Don't intercept API or WebSocket calls
+        if full_path.startswith("api") or full_path.startswith("ws"):
+            raise HTTPException(status_code=404, detail="Not Found")
+
+        # Check if requested static file exists in dist (e.g. favicon.svg, icons.svg)
+        static_file = FRONTEND_DIST / full_path
+        if full_path and static_file.is_file():
+            return FileResponse(str(static_file))
+
+        # SPA fallback: return index.html for all page routes
+        index_file = FRONTEND_DIST / "index.html"
+        if index_file.exists():
+            return FileResponse(str(index_file))
+
+        raise HTTPException(status_code=404, detail="Frontend build not found")
