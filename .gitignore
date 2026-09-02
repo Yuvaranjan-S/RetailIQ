@@ -9,6 +9,7 @@ venv/
 ENV/
 .venv
 *.db
+*.db-journal
 *.sqlite3
 .pytest_cache/
 .coverage
