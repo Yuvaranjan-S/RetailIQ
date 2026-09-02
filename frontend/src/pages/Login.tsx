@@ -43,8 +43,7 @@ export default function Login() {
             <Zap className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white">RetailIQ</h1>
-          <p className="text-gray-500 text-sm mt-1">Edge-First AI Retail Intelligence Platform</p>
-          <p className="text-xs text-gray-600 mt-0.5">Smart India Hackathon 2026 · PS-179</p>
+          <p className="text-gray-400 text-sm mt-1">Autonomous Store Operations & Predictive Intelligence</p>
         </div>
 
         {/* Card */}
@@ -109,7 +108,7 @@ export default function Login() {
 
             {/* Demo credentials */}
             <div className="mt-6 pt-5 border-t border-white/5">
-              <p className="text-xs text-gray-600 text-center mb-3">Demo credentials</p>
+              <p className="text-xs text-gray-500 text-center mb-3 font-medium">Quick Demo Accounts</p>
               <div className="grid grid-cols-3 gap-2 text-xs">
                 {[
                   { role: 'Admin', user: 'admin', pass: 'admin123' },
@@ -122,8 +121,8 @@ export default function Login() {
                     className="p-2 bg-white/3 hover:bg-white/8 border border-white/5 rounded-lg
                                text-gray-400 hover:text-white transition-colors text-center"
                   >
-                    <div className="font-medium">{c.role}</div>
-                    <div className="text-gray-600">{c.user}</div>
+                    <div className="font-medium text-indigo-400">{c.role}</div>
+                    <div className="text-gray-500 mt-0.5">{c.user}</div>
                   </button>
                 ))}
               </div>

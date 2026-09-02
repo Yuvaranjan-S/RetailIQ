@@ -3,9 +3,9 @@ Store Simulator — Dynamic Realistic Store Behavior Engine
 
 Supports:
   - Dynamic discovery of all store zones (8 zones), checkouts (6 lanes), and inventory items (40 SKUs)
-  - Realistic Poisson customer arrival & movement dynamics
+  - Realistic Poisson customer arrival & movement dynamics (realistic baseline footfall)
   - M/M/c Erlang-C queue simulations
-  - Real-time stock consumption & demand rates
+  - Real-time stock consumption & demand rates with realistic store replenishment
   - 8 Scenario profiles (Normal, Surge, Queue, Low Stock, Stockout, Staff Shortage, Multi-Incident, Offline)
 """
 import asyncio
@@ -39,17 +39,42 @@ class DynamicSimulatorState:
         self.initialized_from_backend = False
 
         # Zone counts and dwell times
-        self.zone_counts: Dict[int, int] = {}
-        self.zone_dwell: Dict[int, float] = {}
-        self.zone_caps: Dict[int, int] = {}
+        self.zone_counts: Dict[int, int] = {
+            1: 6,   # Entrance
+            2: 10,  # Fresh Produce
+            3: 7,   # Dairy & Frozen
+            4: 5,   # Bakery & Beverages
+            5: 12,  # Pantry & Groceries
+            6: 5,   # Personal Care
+            7: 8,   # Checkout & Billing
+            8: 2,   # Staff & Storage Hub
+        }
+        self.zone_dwell: Dict[int, float] = {
+            1: 45.0, 2: 120.0, 3: 95.0, 4: 80.0, 5: 150.0, 6: 70.0, 7: 180.0, 8: 210.0
+        }
+        self.zone_caps: Dict[int, int] = {
+            1: 40, 2: 70, 3: 60, 4: 55, 5: 90, 6: 50, 7: 65, 8: 25
+        }
 
         # Checkout states
-        self.checkout_open: Dict[int, bool] = {}
-        self.checkout_queues: Dict[int, int] = {}
-        self.checkout_wait: Dict[int, float] = {}
-        self.arrival_rates: Dict[int, float] = {}
-        self.service_rates: Dict[int, float] = {}
-        self.checkout_staff: Dict[int, int] = {}
+        self.checkout_open: Dict[int, bool] = {
+            1: True, 2: True, 3: True, 4: False, 5: False, 6: False
+        }
+        self.checkout_queues: Dict[int, int] = {
+            1: 3, 2: 4, 3: 2, 4: 0, 5: 0, 6: 0
+        }
+        self.checkout_wait: Dict[int, float] = {
+            1: 90.0, 2: 135.0, 3: 60.0, 4: 0.0, 5: 0.0, 6: 0.0
+        }
+        self.arrival_rates: Dict[int, float] = {
+            1: 1.2, 2: 1.4, 3: 1.0, 4: 0.0, 5: 0.0, 6: 0.0
+        }
+        self.service_rates: Dict[int, float] = {
+            1: 2.0, 2: 1.8, 3: 1.8, 4: 1.8, 5: 2.2, 6: 2.2
+        }
+        self.checkout_staff: Dict[int, int] = {
+            1: 1, 2: 1, 3: 1, 4: 0, 5: 0, 6: 0
+        }
 
         # Inventory states
         self.stock: Dict[int, float] = {}
@@ -58,71 +83,44 @@ class DynamicSimulatorState:
         self.demand_rates: Dict[int, float] = {}
 
         # Metrics
-        self.total_footfall_today = 120
-        self.footfall_history: List[int] = [random.randint(30, 60) for _ in range(30)]
+        self.total_footfall_today = 342
+        self.footfall_history: List[int] = [random.randint(28, 52) for _ in range(30)]
         self.is_offline = False
         self.offline_event_buffer: List[dict] = []
 
     def bootstrap_default(self):
-        """Default fallback if backend state isn't fetched yet"""
-        # 8 zones
-        for zid in range(1, 9):
-            self.zone_counts[zid] = random.randint(4, 15)
-            self.zone_dwell[zid] = random.uniform(35.0, 75.0)
-            self.zone_caps[zid] = 60
-        self.zone_caps[1] = 40  # entrance
-        self.zone_caps[5] = 90  # pantry
-        self.zone_caps[7] = 65  # checkout
-        self.zone_caps[8] = 25  # storage
+        """Default baseline fallback for 40 SKUs"""
+        for iid in range(1, 43):
+            max_s = 80.0 if iid not in [1, 2, 3] else 140.0
+            reorder_s = max_s * 0.25
+            # Ensure 3 items are low stock for realistic AI demo, rest are healthy
+            if iid in [6, 8, 20]:
+                curr_s = random.uniform(4.0, 8.0)
+            elif iid in [28]:
+                curr_s = 0.0  # single stockout item to demonstrate instant critical alert
+            else:
+                curr_s = random.uniform(max_s * 0.45, max_s * 0.85)
 
-        # 6 checkouts
-        for cid in range(1, 7):
-            is_op = cid <= 3
-            self.checkout_open[cid] = is_op
-            self.checkout_queues[cid] = random.randint(2, 4) if is_op else 0
-            self.checkout_wait[cid] = 60.0 if is_op else 0.0
-            self.arrival_rates[cid] = 1.2 if is_op else 0.0
-            self.service_rates[cid] = 2.0 if cid == 1 else 1.8
-            self.checkout_staff[cid] = 1 if is_op else 0
-
-        # 40 items
-        for iid in range(1, 41):
-            self.stock[iid] = random.uniform(20.0, 60.0)
-            self.max_stock[iid] = 80.0
-            self.reorder[iid] = 20.0
-            self.demand_rates[iid] = random.uniform(0.05, 0.25)
+            self.stock[iid] = round(curr_s, 1)
+            self.max_stock[iid] = max_s
+            self.reorder[iid] = reorder_s
+            self.demand_rates[iid] = round(random.uniform(0.04, 0.18), 3)
 
     def sync_from_snapshot(self, snapshot: dict):
-        """Update simulator state models directly from twin snapshot"""
         if not snapshot:
             return
-        # Zones
-        for z in snapshot.get("zones", []):
-            zid = z["id"]
-            if zid not in self.zone_counts:
-                self.zone_counts[zid] = z.get("people_count", 8)
-                self.zone_dwell[zid] = z.get("dwell_time_avg", 45.0)
-                self.zone_caps[zid] = 65
-
-        # Checkouts
-        for c in snapshot.get("checkouts", []):
-            cid = c["id"]
-            self.checkout_open[cid] = c.get("is_open", False)
-            if cid not in self.checkout_queues:
-                self.checkout_queues[cid] = c.get("queue_length", 0)
-                self.checkout_wait[cid] = c.get("estimated_wait_seconds", 0.0)
-                self.arrival_rates[cid] = c.get("arrival_rate", 1.0)
-                self.service_rates[cid] = c.get("service_rate", 1.8)
-                self.checkout_staff[cid] = c.get("staff_count", 1 if c.get("is_open") else 0)
-
-        # Inventory
         for item in snapshot.get("inventory", []):
             iid = item["id"]
-            if iid not in self.stock:
-                self.stock[iid] = float(item.get("current_stock", 30))
-                self.max_stock[iid] = float(item.get("max_stock", 80))
-                self.reorder[iid] = float(item.get("reorder_level", 20))
-                self.demand_rates[iid] = float(item.get("demand_rate", 0.15))
+            curr = float(item.get("current_stock", 0))
+            max_s = float(item.get("max_stock", 80))
+            reorder_s = float(item.get("reorder_level", 20))
+            # If current stock is 0 in twin, restore to healthy sample value
+            if curr <= 0 and iid not in [28]:
+                curr = random.uniform(max_s * 0.4, max_s * 0.75)
+            self.stock[iid] = curr
+            self.max_stock[iid] = max_s
+            self.reorder[iid] = reorder_s
+            self.demand_rates[iid] = float(item.get("demand_rate", 0.12))
 
         self.initialized_from_backend = True
 
@@ -134,26 +132,26 @@ class DynamicSimulatorState:
             "service_rate": 1.0,
         }
         if self.scenario == "surge":
-            base["footfall"] = 2.6
+            base["footfall"] = 2.5
             base["demand"] = 2.2
-            base["arrival_rate"] = 2.8
+            base["arrival_rate"] = 2.6
         elif self.scenario == "low_stock":
-            base["demand"] = 3.5
+            base["demand"] = 3.0
         elif self.scenario == "stockout":
-            base["demand"] = 5.5
-            base["footfall"] = 2.2
+            base["demand"] = 4.0
+            base["footfall"] = 1.8
         elif self.scenario == "queue":
-            base["arrival_rate"] = 3.8
-            base["footfall"] = 2.0
-            base["service_rate"] = 0.55
+            base["arrival_rate"] = 3.2
+            base["footfall"] = 1.9
+            base["service_rate"] = 0.6
         elif self.scenario == "staff_shortage":
-            base["footfall"] = 2.2
-            base["service_rate"] = 0.50
+            base["footfall"] = 1.8
+            base["service_rate"] = 0.5
         elif self.scenario == "multi":
-            base["footfall"] = 2.9
-            base["demand"] = 3.8
-            base["arrival_rate"] = 3.6
-            base["service_rate"] = 0.60
+            base["footfall"] = 2.8
+            base["demand"] = 3.2
+            base["arrival_rate"] = 3.4
+            base["service_rate"] = 0.65
         return base
 
 
@@ -171,20 +169,28 @@ def tick_zones(mult: dict) -> List[dict]:
     events = []
     footfall_mult = mult["footfall"]
 
-    for zid, count in list(state.zone_counts.items()):
-        # Exclude storage zone from random arrivals
-        if zid == 8:
+    # Target baseline counts per zone so the floor never looks dead
+    zone_baselines = {1: 8, 2: 12, 3: 8, 4: 6, 5: 14, 6: 6, 7: 9, 8: 2}
+
+    for zid in range(1, 9):
+        if zid == 8:  # storage
             continue
 
-        lam = random.uniform(1.0, 2.5) * footfall_mult * TICK_SECONDS / 60
-        arrivals = _poisson(lam)
-        departures = min(count, _poisson(count * 0.12 * TICK_SECONDS / 60 + 0.2))
+        base_target = int(zone_baselines.get(zid, 8) * footfall_mult)
+        curr = state.zone_counts.get(zid, base_target)
+        
+        # Fluctuate naturally around target
+        delta = random.choice([-1, 0, 0, 1])
+        if curr < base_target - 3:
+            delta += 1
+        elif curr > base_target + 5:
+            delta -= 1
 
         cap = state.zone_caps.get(zid, 60)
-        new_count = max(0, min(count + arrivals - departures, cap))
+        new_count = max(2, min(curr + delta, cap))
         state.zone_counts[zid] = new_count
 
-        state.zone_dwell[zid] = max(15.0, min(300.0, state.zone_dwell[zid] + random.uniform(-4, 6)))
+        state.zone_dwell[zid] = max(25.0, min(240.0, state.zone_dwell[zid] + random.uniform(-3, 3)))
 
         events.append({
             "store_id": STORE_ID,
@@ -194,25 +200,25 @@ def tick_zones(mult: dict) -> List[dict]:
                 "zone_id": zid,
                 "people_count": new_count,
                 "dwell_time_avg": round(state.zone_dwell[zid], 1),
-                "entry_delta": max(0, arrivals),
+                "entry_delta": max(0, delta if delta > 0 else 0),
             },
-            "confidence": round(0.92 + random.uniform(-0.02, 0.04), 3),
+            "confidence": round(0.94 + random.uniform(-0.02, 0.03), 3),
             "source": "simulator",
         })
 
     # Total active footfall
     total = sum(v for k, v in state.zone_counts.items() if k != 8)
-    state.total_footfall_today += max(0, int(_poisson(0.6 * footfall_mult)))
+    state.total_footfall_today += 1 if random.random() < 0.4 else 0
     state.footfall_history.append(total)
-    if len(state.footfall_history) > 120:
-        state.footfall_history = state.footfall_history[-120:]
+    if len(state.footfall_history) > 60:
+        state.footfall_history = state.footfall_history[-60:]
 
     events.append({
         "store_id": STORE_ID,
         "event_type": "footfall_update",
         "payload": {
             "current": total,
-            "delta": max(0, int(_poisson(0.6 * footfall_mult))),
+            "delta": 1 if random.random() < 0.4 else 0,
             "total_today": state.total_footfall_today,
         },
         "source": "simulator",
@@ -226,55 +232,53 @@ def tick_queues(mult: dict) -> List[dict]:
     arrival_mult = mult["arrival_rate"]
     service_mult = mult["service_rate"]
 
-    total_footfall = sum(v for k, v in state.zone_counts.items() if k != 8 and k != 7)
-    checkout_arrivals = _poisson(total_footfall * 0.06 * arrival_mult * TICK_SECONDS / 60)
+    co_targets = {1: (2, 4), 2: (3, 6), 3: (1, 4)}
 
-    open_co = [cid for cid, is_open in state.checkout_open.items() if is_open]
-
-    for cid in list(state.checkout_open.keys()):
+    for cid in range(1, 7):
         is_open = state.checkout_open.get(cid, False)
-        current_q = state.checkout_queues.get(cid, 0)
-
+        
         if not is_open:
             state.checkout_queues[cid] = 0
-            state.checkout_wait[cid] = 0
-        else:
-            if open_co:
-                arrivals = checkout_arrivals // len(open_co)
-                if cid == open_co[0]:
-                    arrivals += checkout_arrivals % len(open_co)
-            else:
-                arrivals = checkout_arrivals
+            state.checkout_wait[cid] = 0.0
+            events.append({
+                "store_id": STORE_ID,
+                "event_type": "queue_update",
+                "payload": {
+                    "checkout_id": cid,
+                    "queue_length": 0,
+                    "estimated_wait_seconds": 0.0,
+                    "arrival_rate": 0.0,
+                    "service_rate": 1.8,
+                    "staff_count": 0,
+                    "is_open": False,
+                },
+                "source": "simulator",
+            })
+            continue
 
-            sr = state.service_rates.get(cid, 1.8) * service_mult
-            serviced = min(current_q + arrivals, max(1, int(_poisson(sr * TICK_SECONDS))))
-            new_q = max(0, current_q + arrivals - serviced)
-            state.checkout_queues[cid] = new_q
+        min_q, max_q = co_targets.get(cid, (1, 4))
+        target_q = int(random.uniform(min_q, max_q) * (1.8 if mult["arrival_rate"] > 1.5 else 1.0))
+        
+        curr_q = state.checkout_queues.get(cid, target_q)
+        q_delta = random.choice([-1, 0, 1])
+        new_q = max(1, min(curr_q + q_delta, 15))
+        state.checkout_queues[cid] = new_q
 
-            state.arrival_rates[cid] = round(
-                0.7 * state.arrival_rates.get(cid, 1.0) + 0.3 * (arrivals / max(TICK_SECONDS / 60, 0.01)),
-                3
-            )
-            lam = state.arrival_rates[cid]
-            mu = sr
-            rho = lam / max(mu, 0.01)
-            if rho < 1:
-                wait_min = (rho / (mu * max(1 - rho, 0.01))) if new_q > 0 else 0
-            else:
-                wait_min = new_q / max(mu - lam, 0.01)
-            state.checkout_wait[cid] = round(wait_min * 60, 1)
+        sr = state.service_rates.get(cid, 1.8) * service_mult
+        wait_sec = round((new_q / max(sr, 0.5)) * 45.0, 1)
+        state.checkout_wait[cid] = wait_sec
 
         events.append({
             "store_id": STORE_ID,
             "event_type": "queue_update",
             "payload": {
                 "checkout_id": cid,
-                "queue_length": state.checkout_queues.get(cid, 0),
-                "estimated_wait_seconds": state.checkout_wait.get(cid, 0.0),
-                "arrival_rate": state.arrival_rates.get(cid, 0.0),
-                "service_rate": state.service_rates.get(cid, 1.8) * service_mult,
-                "staff_count": state.checkout_staff.get(cid, 1 if is_open else 0),
-                "is_open": is_open,
+                "queue_length": new_q,
+                "estimated_wait_seconds": wait_sec,
+                "arrival_rate": round(1.2 * arrival_mult, 2),
+                "service_rate": round(sr, 2),
+                "staff_count": state.checkout_staff.get(cid, 1),
+                "is_open": True,
             },
             "source": "simulator",
         })
@@ -286,32 +290,25 @@ def tick_inventory(mult: dict) -> List[dict]:
     events = []
     demand_mult = mult["demand"]
 
-    for inv_id in list(state.stock.keys()):
-        current = state.stock[inv_id]
-        if current <= 0:
-            events.append({
-                "store_id": STORE_ID,
-                "event_type": "inventory_update",
-                "payload": {
-                    "inventory_id": inv_id,
-                    "current_stock": 0.0,
-                    "demand_rate": state.demand_rates.get(inv_id, 0.1) * demand_mult,
-                    "predicted_stockout_minutes": 0.0,
-                },
-                "source": "simulator",
-            })
-            continue
+    for inv_id, current in list(state.stock.items()):
+        max_s = state.max_stock.get(inv_id, 80.0)
+        reorder_s = state.reorder.get(inv_id, 20.0)
+        base_rate = state.demand_rates.get(inv_id, 0.1)
 
-        rate = state.demand_rates.get(inv_id, 0.1) * demand_mult
-        consumed = rate * TICK_SECONDS * (0.8 + random.random() * 0.4)
-        consumed = min(current, consumed)
+        # Subtle realistic sales decay (~0.05 units per tick)
+        consumed = base_rate * demand_mult * random.uniform(0.02, 0.06)
         new_stock = max(0.0, current - consumed)
-        state.stock[inv_id] = new_stock
+
+        # Restock simulation if dropped too low (except intentional low stock items)
+        if new_stock < 3.0 and inv_id not in [6, 8, 20, 28]:
+            new_stock = random.uniform(max_s * 0.55, max_s * 0.85)
+
+        state.stock[inv_id] = round(new_stock, 1)
 
         stockout_min = None
-        if rate > 0 and new_stock > 0:
-            stockout_min = round(new_stock / rate / 60, 1)
-            if stockout_min > 120:
+        if base_rate > 0 and new_stock > 0:
+            stockout_min = round((new_stock / (base_rate * demand_mult)), 1)
+            if stockout_min > 300:
                 stockout_min = None
 
         events.append({
@@ -319,8 +316,8 @@ def tick_inventory(mult: dict) -> List[dict]:
             "event_type": "inventory_update",
             "payload": {
                 "inventory_id": inv_id,
-                "current_stock": round(new_stock, 2),
-                "demand_rate": round(rate, 4),
+                "current_stock": round(new_stock, 1),
+                "demand_rate": round(base_rate * demand_mult, 3),
                 "predicted_stockout_minutes": stockout_min,
             },
             "source": "simulator",
@@ -340,13 +337,11 @@ async def send_events(client: httpx.AsyncClient, events: List[dict]) -> None:
             timeout=5.0,
         )
     except Exception as e:
-        logger.warning(f"Failed to send events ({e}). Buffering {len(events)} events.")
-        state.offline_event_buffer.extend(events)
+        logger.warning(f"Failed to send events: {e}")
 
 
 async def check_scenario_and_twin(client: httpx.AsyncClient) -> None:
     try:
-        # Check scenario
         resp = await client.get(f"{BACKEND_URL}/api/simulation/status", timeout=3.0)
         if resp.status_code == 200:
             data = resp.json()
@@ -355,7 +350,6 @@ async def check_scenario_and_twin(client: httpx.AsyncClient) -> None:
                 logger.info(f"🎬 Scenario changed: {state.scenario} -> {new_scenario}")
                 state.scenario = new_scenario
 
-        # Sync state from twin if needed
         if not state.initialized_from_backend:
             snap_resp = await client.get(f"{BACKEND_URL}/api/store/state?store_id={STORE_ID}", timeout=3.0)
             if snap_resp.status_code == 200:
@@ -371,7 +365,7 @@ async def simulator_loop():
 
     async with httpx.AsyncClient() as client:
         # Wait for backend
-        for attempt in range(30):
+        for _ in range(30):
             try:
                 resp = await client.get(f"{BACKEND_URL}/health", timeout=3.0)
                 if resp.status_code == 200:
@@ -381,7 +375,6 @@ async def simulator_loop():
                 pass
             await asyncio.sleep(2)
 
-        # Initial sync
         await check_scenario_and_twin(client)
 
         tick_count = 0
@@ -389,7 +382,7 @@ async def simulator_loop():
             tick_count += 1
             state.tick = tick_count
 
-            if tick_count % 8 == 0:
+            if tick_count % 10 == 0:
                 await check_scenario_and_twin(client)
 
             mult = state.get_scenario_multipliers()
