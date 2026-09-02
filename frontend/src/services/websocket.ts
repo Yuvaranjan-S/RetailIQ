@@ -5,9 +5,10 @@ import { storeApi } from '@/services/api'
 import type { WSMessage, StoreSnapshot } from '@/types'
 
 const getWsUrl = (storeId: number) => {
-  const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
-  const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${host}:8000/ws/store?store_id=${storeId}`
+  if (typeof window === 'undefined') return `ws://127.0.0.1:8000/ws/store?store_id=${storeId}`
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  // Uses Vite proxy on /ws so it works on both localhost AND public Cloudflare/tunnel domains
+  return `${protocol}//${window.location.host}/ws/store?store_id=${storeId}`
 }
 
 const RECONNECT_DELAY = 3000
