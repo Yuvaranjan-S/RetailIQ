@@ -1,8 +1,13 @@
+# Executables & Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
 .Python
 env/
 venv/
